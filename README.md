@@ -17,6 +17,8 @@ personal mail from the same companies keep arriving.
 
 ![preview](preview.png)
 
+<p align="center"><img src="screenshots/unsubscribe.png" width="480" alt="Spame panel with senders grouped into sections"></p>
+
 ## Install
 
 ```bash
@@ -89,5 +91,8 @@ Then delete the app password in your Google account.
 python3 -m unittest discover -s tests
 omarchy plugin validate .
 ```
+
+Demo mode shows fictional senders and fakes unsubscribing, handy for UI work
+and screenshots: `touch ~/.config/spame/DEMO` (remove the file to go back).
 
 MIT licensed.

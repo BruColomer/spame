@@ -448,7 +448,8 @@ Panel {
             : (spame.selectedCount > 0 ? "Done · unsubscribe from " + spame.selectedCount
             : "Tick the senders you don't want")
           iconText: "󰗨"
-          foreground: spame.selectedCount > 0 ? root.urgent : root.dim
+          selected: spame.selectedCount > 0
+          foreground: spame.selectedCount > 0 ? root.foreground : root.dim
           fontFamily: root.fontFamily
           enabled: spame.selectedCount > 0 && !spame.unsubscribing
           onClicked: spame.unsubscribeSelected()
@@ -512,7 +513,7 @@ Panel {
         Item { Layout.fillWidth: true }
         Text {
           text: sec.checkState === "all" ? "󰄲" : (sec.checkState === "some" ? "󰡖" : "󰄱")
-          color: sec.checkState === "none" ? root.dim : root.urgent
+          color: sec.checkState === "none" ? root.dim : root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.icon
 
@@ -569,7 +570,7 @@ Panel {
 
       Text {
         text: row.checked ? "󰄲" : "󰄱"
-        color: row.checked ? root.urgent : root.dim
+        color: row.checked ? root.foreground : root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.icon
       }

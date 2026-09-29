@@ -257,6 +257,26 @@ class Topics(unittest.TestCase):
         self.assertEqual(spame.discover_topics(senders), [])
 
 
+class DemoMode(unittest.TestCase):
+    def test_demo_data_is_fictional_and_complete(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": d, "SPAME_DEMO": "1"}):
+                self.assertTrue(spame.demo_enabled())
+                scan = spame.demo_scan()
+                self.assertGreater(len(scan["senders"]), 15)
+                self.assertTrue(scan["topics"])
+                cats = {c["id"] for c in spame.category_list(scan["topics"])}
+                for s in scan["senders"]:
+                    self.assertIn(s["category"], cats)
+                    self.assertTrue(s["domain"].endswith(".example"), s["domain"])
+
+    def test_demo_off_by_default(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": d}, clear=False):
+                os.environ.pop("SPAME_DEMO", None)
+                self.assertFalse(spame.demo_enabled())
+
+
 class AllMailFolder(unittest.TestCase):
     def test_finds_localized_all_mail_by_flag(self):
         listing = [

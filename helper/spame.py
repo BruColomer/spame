@@ -845,6 +845,99 @@ def cmd_resubscribe(args):
     out({"ok": True, "url": url})
 
 
+# ---------------------------------------------------------------- demo mode
+# Fictional data for screenshots and UI work: `touch ~/.config/spame/DEMO`
+# (or SPAME_DEMO=1). Nothing touches the network or the real state.
+
+DEMO_SENDERS = [
+    ("Card Magic Weekly", "cardmagicweekly", "topic-magic", 64, "New effect: the floating deck"),
+    ("Mentalism Monthly", "mentalismmonthly", "topic-magic", 31, "Five reads that feel like magic"),
+    ("Magic Cellar", "magiccellar", "topic-magic", 27, "Restocked: gimmicked cards"),
+    ("Close-up Magic Club", "closeupmagicclub", "topic-magic", 12, "Live lecture on Thursday"),
+    ("Northwind Deals", "northwinddeals", "shopping", 88, "48 hours only: 40% off everything"),
+    ("Basket & Co", "basketandco", "shopping", 42, "Your cart misses you"),
+    ("Evergreen Outfitters", "evergreenoutfitters", "shopping", 19, "New arrivals for autumn"),
+    ("Pixel Weekly", "pixelweekly", "tech", 57, "The AI tools worth your time this week"),
+    ("Stackline Dev", "stacklinedev", "tech", 23, "Ship faster with our new CLI"),
+    ("Cloudnest", "cloudnest", "tech", 9, "Your monthly usage report"),
+    ("Bullrun Signals", "bullrunsignals", "finance", 73, "3 stocks to buy before Friday"),
+    ("Coinharbor", "coinharbor", "finance", 16, "Bitcoin just moved. Here is why"),
+    ("Brightpath Academy", "brightpathacademy", "learning", 34, "Your free Python lesson is ready"),
+    ("Arcade Pass", "arcadepass", "entertainment", 21, "Three free games this week"),
+    ("Silver Screen Cinemas", "silverscreen", "entertainment", 8, "Premieres this weekend"),
+    ("Wanderlane Travel", "wanderlane", "travel", 14, "Flights to Lisbon from 29 EUR"),
+    ("Pinboard Social", "pinboardsocial", "social", 45, "Ideas we think you'll love"),
+    ("The Morning Brief", "morningbrief", "news", 90, "Five things to know today"),
+    ("Quiet Pages", "quietpages", "news", 7, "This month's reading list"),
+    ("Lumen Studio", "lumenstudio", "other", 11, "A quick update from the team"),
+]
+
+
+def demo_enabled():
+    return os.environ.get("SPAME_DEMO") == "1" or (config_path().parent / "DEMO").exists()
+
+
+def _demo_state_path():
+    return _xdg("XDG_CACHE_HOME", ".cache") / "demo-state.json"
+
+
+def demo_scan():
+    senders = []
+    for i, (name, slug, category, count, subject) in enumerate(DEMO_SENDERS):
+        senders.append({
+            "id": slug + ".example", "name": name, "domain": slug + ".example", "count": count,
+            "last": "2026-09-2" + str(i % 9), "http": f"https://{slug}.example/unsubscribe",
+            "mailto": None, "oneClick": i % 7 != 3, "subject": subject, "category": category,
+        })
+        senders[-1]["method"] = best_method(senders[-1])
+    senders.sort(key=lambda s: -s["count"])
+    return {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "topics": [{"id": "topic-magic", "label": "Magic"}], "senders": senders}
+
+
+def demo_command(cmd, args):
+    state = _read_json(_demo_state_path(), {"senders": {
+        "oldnews.example": {"id": "oldnews.example", "name": "Old News Daily", "domain": "oldnews.example",
+                            "status": "done", "method": "one-click", "at": "2026-09-20T10:00:00+00:00"},
+        "flashsale.example": {"id": "flashsale.example", "name": "Flash Sale Club",
+                              "domain": "flashsale.example", "status": "done", "method": "page",
+                              "at": "2026-09-18T10:00:00+00:00"},
+    }})
+    scan = demo_scan()
+    for s in scan["senders"]:
+        s["unsubscribed"] = s["id"] in state["senders"]
+    if cmd == "status":
+        pending = sum(1 for s in scan["senders"] if not s["unsubscribed"])
+        return out({"configured": True, "email": "you@gmail.com", "lastScan": scan["at"],
+                    "pending": pending})
+    if cmd in ("scan", "cached"):
+        return out({"at": scan["at"], "categories": category_list(scan["topics"]),
+                    "senders": scan["senders"]})
+    if cmd == "unsubscribe":
+        wanted = set(json.loads(sys.stdin.readline() or "[]"))
+        done = 0
+        for s in scan["senders"]:
+            if s["id"] not in wanted:
+                continue
+            out({"id": s["id"], "status": "working"})
+            time.sleep(0.25)
+            state["senders"][s["id"]] = {"id": s["id"], "name": s["name"], "domain": s["domain"],
+                                         "status": "done", "method": s["method"],
+                                         "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            done += 1
+            out({"id": s["id"], "status": "done", "method": s["method"]})
+        _write_json(_demo_state_path(), state)
+        return out({"summary": {"done": done, "needsYou": 0}})
+    if cmd == "list-unsubscribed":
+        items = sorted(state["senders"].values(), key=lambda s: s.get("at", ""), reverse=True)
+        return out({"senders": items})
+    if cmd == "resubscribe":
+        state["senders"].pop(args[0] if args else "", None)
+        _write_json(_demo_state_path(), state)
+        return out({"ok": True, "url": "https://example.com (demo)"})
+    return out({"ok": True})
+
+
 COMMANDS = {
     "status": cmd_status, "setup": cmd_setup, "forget": cmd_forget, "scan": cmd_scan,
     "cached": cmd_cached, "unsubscribe": cmd_unsubscribe,
@@ -857,6 +950,9 @@ def main(argv):
         out({"error": "usage: spame.py " + "|".join(COMMANDS)})
         return 0
     try:
+        if demo_enabled():
+            demo_command(argv[0], argv[1:])
+            return 0
         COMMANDS[argv[0]](argv[1:])
     except imaplib.IMAP4.error as e:
         out({"error": f"Gmail login failed: {e}"})
