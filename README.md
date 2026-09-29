@@ -7,6 +7,11 @@ Spame scans your mailbox for senders that carry a `List-Unsubscribe` header
 press **Done** it unsubscribes you from everything you ticked. A second tab
 lists what you've unsubscribed from and lets you resubscribe.
 
+Senders are grouped into sections built from *your* mailbox: recurring
+interests become their own section (a magician gets **Magic**, a cyclist gets
+**Cycling**), and the rest land in Finance, Tech, Courses, Shopping, Games &
+entertainment, Travel, Social or News. Only sections you actually have are shown.
+
 It never deletes, blocks, labels or spam-marks mail. Order confirmations and
 personal mail from the same companies keep arriving.
 
@@ -52,10 +57,12 @@ the unsubscribed list so they show up again on the next scan.
 |---|---|
 | Open / close | click the envelope, or `omarchy-shell io.github.brucolomer.spame toggle` |
 | Rescan | middle-click the envelope, or `r` in the panel |
-| Filter | `/` in the panel |
+| Filter (name, domain or subject) | `/` in the panel |
+| Select a whole section | the checkbox on the section header |
+| Collapse a section | click the section header |
 | Switch tabs | `1` / `2` |
 
-The badge shows how many newsletter senders are still subscribed.
+The envelope pulses while Spame is scanning or unsubscribing; hover it to see how many senders are left.
 Setting: **Months of mail to scan** (default 6).
 
 ## Files

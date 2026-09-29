@@ -29,17 +29,53 @@ Panel {
     var list = spame.subscribed
     if (q === "") return list
     return list.filter(function(s) {
-      return String(s.name).toLowerCase().indexOf(q) >= 0 || String(s.domain).toLowerCase().indexOf(q) >= 0
+      return String(s.name).toLowerCase().indexOf(q) >= 0
+        || String(s.domain).toLowerCase().indexOf(q) >= 0
+        || String(s.subject || "").toLowerCase().indexOf(q) >= 0
     })
   }
 
-  function visibleIds() { return visibleSenders.map(function(s) { return s.id }) }
+  // Only the sections this mailbox actually has, in the helper's order.
+  readonly property var sections: {
+    var cats = spame.categories.length > 0 ? spame.categories : [{ id: "other", label: "Newsletters" }]
+    var known = {}
+    var buckets = {}
+    for (var c = 0; c < cats.length; c++) { known[cats[c].id] = true; buckets[cats[c].id] = [] }
+    for (var i = 0; i < visibleSenders.length; i++) {
+      var s = visibleSenders[i]
+      var key = known[s.category] ? s.category : "other"
+      if (!buckets[key]) buckets[key] = []
+      buckets[key].push(s)
+    }
+    var out = []
+    for (var k = 0; k < cats.length; k++) {
+      var list = buckets[cats[k].id] || []
+      if (list.length > 0) out.push({ id: cats[k].id, label: cats[k].label, senders: list })
+    }
+    return out
+  }
+
+  readonly property int oneClickCount: spame.subscribed.filter(function(s) { return s.method === "one-click" }).length
+
+  function idsOf(list) { return list.map(function(s) { return s.id }) }
+
+  function sectionState(list) {
+    var on = 0
+    for (var i = 0; i < list.length; i++) if (spame.selected[list[i].id]) on++
+    return on === 0 ? "none" : (on === list.length ? "all" : "some")
+  }
 
   function statusGlyph(st) {
     if (st === "done") return "󰄬"
     if (st === "needs-you") return "󰏫"
     if (st === "working" || st === "queued") return "󰔟"
     return ""
+  }
+
+  function methodTag(m) {
+    if (m === "one-click") return "1-click"
+    if (m === "email") return "email"
+    return "web"
   }
 
   function methodLabel(m) {
@@ -50,13 +86,13 @@ Panel {
   }
 
   function relativeScan() {
-    if (spame.lastScan === "") return "Not scanned yet"
+    if (spame.lastScan === "") return "not scanned yet"
     var mins = Math.round((Date.now() - Date.parse(spame.lastScan)) / 60000)
-    if (mins < 1) return "Scanned just now"
-    if (mins < 60) return "Scanned " + mins + " min ago"
+    if (mins < 1) return "scanned just now"
+    if (mins < 60) return "scanned " + mins + " min ago"
     var h = Math.round(mins / 60)
-    if (h < 48) return "Scanned " + h + " h ago"
-    return "Scanned " + Math.round(h / 24) + " days ago"
+    if (h < 48) return "scanned " + h + " h ago"
+    return "scanned " + Math.round(h / 24) + " days ago"
   }
 
   implicitWidth: button.implicitWidth
@@ -65,7 +101,7 @@ Panel {
   onOpenedChanged: if (opened) {
     spame.refresh()
     spame.loadUnsubscribed()
-    if (panelFlick) panelFlick.contentY = 0
+    if (listFlick) listFlick.contentY = 0
     if (spame.configured && spame.scanIsStale()) spame.scan()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -89,43 +125,22 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: "󰇮"
-    tooltipText: spame.pendingCount > 0 ? spame.pendingCount + " newsletter senders" : "Spame"
+    tooltipText: spame.pendingCount > 0 ? "Spame · " + spame.pendingCount + " newsletter senders" : "Spame"
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.MiddleButton) spame.scan()
       else root.toggle()
     }
 
+    // Small pulse while scanning or unsubscribing; no unread-style counter.
     Rectangle {
-      visible: spame.pendingCount > 0 && !spame.busy
-      anchors.right: parent.right
-      anchors.top: parent.top
-      anchors.rightMargin: Style.space(1)
-      anchors.topMargin: Style.space(2)
-      width: Math.max(height, badgeText.implicitWidth + Style.space(6))
-      height: badgeText.implicitHeight + Style.space(1)
-      radius: height / 2
-      color: root.accent
-
-      Text {
-        id: badgeText
-        anchors.centerIn: parent
-        text: spame.pendingCount > 99 ? "99+" : String(spame.pendingCount)
-        color: Color.background
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption - 1
-        font.bold: true
-      }
-    }
-
-    Rectangle {
-      visible: spame.busy
+      visible: spame.scanning || spame.unsubscribing
       anchors.right: parent.right
       anchors.top: parent.top
       anchors.margins: Style.space(3)
       width: Style.space(5); height: width; radius: width / 2
       color: root.accent
       SequentialAnimation on opacity {
-        running: spame.busy; loops: Animation.Infinite
+        running: spame.scanning || spame.unsubscribing; loops: Animation.Infinite
         NumberAnimation { to: 0.2; duration: 500 }
         NumberAnimation { to: 1.0; duration: 500 }
       }
@@ -139,8 +154,10 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(440))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(640))
+    contentWidth: panel.fittedContentWidth(Style.space(560))
+    contentHeight: panel.fittedContentHeight(
+      spame.configured ? Style.space(780) : setupColumn.implicitHeight + header.implicitHeight + Style.space(24),
+      Style.space(820))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -155,28 +172,23 @@ Panel {
         else if (t === "2") root.tab = "resubscribe"
       }
 
-      Flickable {
-        id: panelFlick
+      ColumnLayout {
         anchors.fill: parent
-        contentWidth: width
-        contentHeight: column.implicitHeight
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        interactive: contentHeight > height
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        spacing: Style.space(10)
+
+        // -------------------------------------------------------- fixed header
 
         Column {
-          id: column
-          width: panelFlick.width
+          id: header
+          Layout.fillWidth: true
           spacing: Style.space(10)
 
           PanelHero {
-            id: hero
             width: parent.width
             title: "Spame"
             meta: !spame.configured ? "Unsubscribe from newsletters in one go"
               : (spame.scanning ? "Scanning your mail…"
-              : spame.pendingCount + " senders · " + root.relativeScan())
+              : spame.pendingCount + " senders · " + root.oneClickCount + " one-click · " + root.relativeScan())
             detail: spame.configured ? spame.email : ""
             foreground: root.foreground
             fontFamily: root.fontFamily
@@ -212,196 +224,206 @@ Panel {
             textFormat: Text.PlainText
           }
 
-          // ------------------------------------------------------------ setup
-
-          Column {
-            visible: !spame.configured
-            width: parent.width
-            spacing: Style.space(8)
-
-            PanelSeparator { foreground: root.foreground }
-
-            Text {
-              width: parent.width
-              text: "Spame connects to Gmail with an app password. It only reads mail headers and never deletes anything. The password is stored in your system keyring."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
-            }
-
-            TextField {
-              id: emailField
-              width: parent.width
-              foreground: root.foreground
-              placeholderText: "you@gmail.com"
-              text: root.emailText
-              onTextChanged: root.emailText = text
-              onAccepted: passwordField.forceActiveFocus()
-              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
-            }
-
-            TextField {
-              id: passwordField
-              width: parent.width
-              foreground: root.foreground
-              password: true
-              echoMode: TextInput.Password
-              placeholderText: "16-character app password"
-              text: root.passwordText
-              onTextChanged: root.passwordText = text
-              onAccepted: spame.connect(root.emailText, root.passwordText)
-              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
-            }
-
-            RowLayout {
-              width: parent.width
-              spacing: Style.space(8)
-
-              Button {
-                text: "Create app password"
-                iconText: "󰌆"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                onClicked: Qt.openUrlExternally("https://myaccount.google.com/apppasswords")
-              }
-              Item { Layout.fillWidth: true }
-              Button {
-                text: spame.busy ? "Connecting…" : "Connect"
-                bordered: true
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                enabled: !spame.busy && root.emailText.indexOf("@") > 0 && root.passwordText.length >= 16
-                onClicked: {
-                  spame.connect(root.emailText, root.passwordText)
-                  root.passwordText = ""
-                }
-              }
-            }
-          }
-
-          // ------------------------------------------------------------ tabs
-
-          ButtonGroup {
+          RowLayout {
             visible: spame.configured
-            focusable: false
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            value: root.tab
-            options: [
-              { value: "unsubscribe", label: "Unsubscribe (" + spame.pendingCount + ")", icon: "󰗨" },
-              { value: "resubscribe", label: "Resubscribe (" + spame.unsubscribed.length + ")", icon: "󰑓" }
-            ]
-            onChanged: function(v) { root.tab = v }
-          }
-
-          // ------------------------------------------------------ unsubscribe
-
-          Column {
-            visible: spame.configured && root.tab === "unsubscribe"
             width: parent.width
             spacing: Style.space(8)
 
-            RowLayout {
-              width: parent.width
-              spacing: Style.space(6)
+            ButtonGroup {
+              focusable: false
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              value: root.tab
+              options: [
+                { value: "unsubscribe", label: "Unsubscribe · " + spame.pendingCount, icon: "󰗨" },
+                { value: "resubscribe", label: "Resubscribe · " + spame.unsubscribed.length, icon: "󰑓" }
+              ]
+              onChanged: function(v) { root.tab = v }
+            }
+            Item { Layout.fillWidth: true }
+            PanelActionButton {
+              iconText: "󰍃"
+              tooltipText: "Disconnect " + spame.email
+              foreground: root.dim
+              hoverColor: root.urgent
+              fontFamily: root.fontFamily
+              enabled: !spame.busy
+              onClicked: spame.forget()
+            }
+          }
 
-              TextField {
-                id: filterField
-                Layout.fillWidth: true
-                foreground: root.foreground
-                placeholderText: "Filter senders (/)"
-                text: root.filterText
-                onTextChanged: root.filterText = text
-                Keys.onEscapePressed: { root.filterText = ""; keyCatcher.forceActiveFocus() }
-              }
-              PanelActionButton {
-                iconText: "󰒆"
-                tooltipText: "Select all shown"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                enabled: !spame.unsubscribing
-                onClicked: spame.selectAll(root.visibleIds())
-              }
-              PanelActionButton {
-                iconText: "󰒉"
-                tooltipText: "Clear selection"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                enabled: !spame.unsubscribing && spame.selectedCount > 0
-                onClicked: spame.clearSelection()
+          RowLayout {
+            visible: spame.configured && root.tab === "unsubscribe" && spame.subscribed.length > 0
+            width: parent.width
+            spacing: Style.space(6)
+
+            TextField {
+              id: filterField
+              Layout.fillWidth: true
+              foreground: root.foreground
+              placeholderText: "Filter by name, domain or subject  (/)"
+              text: root.filterText
+              onTextChanged: root.filterText = text
+              Keys.onEscapePressed: { root.filterText = ""; keyCatcher.forceActiveFocus() }
+            }
+            PanelActionButton {
+              iconText: "󰒆"
+              tooltipText: "Select everything shown"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              enabled: !spame.unsubscribing
+              onClicked: spame.selectAll(root.idsOf(root.visibleSenders))
+            }
+            PanelActionButton {
+              iconText: "󰒉"
+              tooltipText: "Clear selection"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              enabled: !spame.unsubscribing && spame.selectedCount > 0
+              onClicked: spame.clearSelection()
+            }
+          }
+        }
+
+        // ------------------------------------------------------------ setup
+
+        Column {
+          id: setupColumn
+          visible: !spame.configured
+          Layout.fillWidth: true
+          spacing: Style.space(8)
+
+          PanelSeparator { foreground: root.foreground }
+
+          Text {
+            width: parent.width
+            text: "Spame connects to Gmail with an app password. It only reads mail headers and never deletes anything. The password is stored in your system keyring."
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
+          TextField {
+            id: emailField
+            width: parent.width
+            foreground: root.foreground
+            placeholderText: "you@gmail.com"
+            text: root.emailText
+            onTextChanged: root.emailText = text
+            onAccepted: passwordField.forceActiveFocus()
+            Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+          }
+
+          TextField {
+            id: passwordField
+            width: parent.width
+            foreground: root.foreground
+            password: true
+            echoMode: TextInput.Password
+            placeholderText: "16-character app password"
+            text: root.passwordText
+            onTextChanged: root.passwordText = text
+            onAccepted: spame.connect(root.emailText, root.passwordText)
+            Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+          }
+
+          RowLayout {
+            width: parent.width
+            spacing: Style.space(8)
+
+            Button {
+              text: "Create app password"
+              iconText: "󰌆"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: Qt.openUrlExternally("https://myaccount.google.com/apppasswords")
+            }
+            Item { Layout.fillWidth: true }
+            Button {
+              text: spame.busy ? "Connecting…" : "Connect"
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              enabled: !spame.busy && root.emailText.indexOf("@") > 0 && root.passwordText.length >= 16
+              onClicked: {
+                spame.connect(root.emailText, root.passwordText)
+                root.passwordText = ""
               }
             }
+          }
+        }
+
+        // ------------------------------------------------------ scrolling list
+
+        Flickable {
+          id: listFlick
+          visible: spame.configured
+          Layout.fillWidth: true
+          Layout.fillHeight: true
+          contentWidth: width
+          contentHeight: root.tab === "unsubscribe" ? sectionsColumn.implicitHeight : resubColumn.implicitHeight
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          interactive: contentHeight > height
+          ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+          Column {
+            id: sectionsColumn
+            visible: root.tab === "unsubscribe"
+            width: listFlick.width - Style.space(8)
+            spacing: Style.space(6)
 
             Text {
               visible: spame.subscribed.length === 0 && !spame.scanning
               width: parent.width
-              topPadding: Style.space(12)
-              bottomPadding: Style.space(12)
+              topPadding: Style.space(24)
               horizontalAlignment: Text.AlignHCenter
-              text: spame.lastScan === "" ? "Press 󰑐 to scan your mailbox." : "Inbox is clean. No newsletter senders left."
+              text: spame.lastScan === "" ? "Press 󰑐 to scan your mailbox." : "All clear. No newsletter senders left."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
               wrapMode: Text.WordWrap
             }
 
-            Column {
+            Text {
+              visible: spame.subscribed.length > 0 && root.visibleSenders.length === 0
               width: parent.width
-              spacing: Style.space(2)
-
-              Repeater {
-                model: root.visibleSenders
-                SenderRow {
-                  required property var modelData
-                  width: parent.width
-                  sender: modelData
-                }
-              }
+              topPadding: Style.space(24)
+              horizontalAlignment: Text.AlignHCenter
+              text: "Nothing matches “" + root.filterText + "”."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
             }
 
-            Button {
-              width: parent.width
-              visible: spame.subscribed.length > 0
-              bordered: true
-              text: spame.unsubscribing ? "Unsubscribing…"
-                : (spame.selectedCount > 0 ? "Done · unsubscribe from " + spame.selectedCount : "Tick the senders you don't want")
-              iconText: "󰗨"
-              foreground: spame.selectedCount > 0 ? root.urgent : root.dim
-              fontFamily: root.fontFamily
-              enabled: spame.selectedCount > 0 && !spame.unsubscribing
-              onClicked: spame.unsubscribeSelected()
+            Repeater {
+              model: root.sections
+              Section {
+                required property var modelData
+                width: sectionsColumn.width
+                section: modelData
+              }
             }
           }
 
-          // ------------------------------------------------------ resubscribe
-
           Column {
-            visible: spame.configured && root.tab === "resubscribe"
-            width: parent.width
+            id: resubColumn
+            visible: root.tab === "resubscribe"
+            width: listFlick.width - Style.space(8)
             spacing: Style.space(2)
 
             Text {
-              visible: spame.unsubscribed.length === 0
               width: parent.width
-              topPadding: Style.space(12)
-              bottomPadding: Style.space(12)
-              horizontalAlignment: Text.AlignHCenter
-              text: "Nothing here yet. Senders you unsubscribe from show up here."
+              topPadding: spame.unsubscribed.length === 0 ? Style.space(24) : 0
+              bottomPadding: Style.space(6)
+              horizontalAlignment: spame.unsubscribed.length === 0 ? Text.AlignHCenter : Text.AlignLeft
+              text: spame.unsubscribed.length === 0
+                ? "Nothing here yet. Senders you unsubscribe from show up here."
+                : "Resubscribe opens the sender's page so you can sign back up."
               color: root.dim
               font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              wrapMode: Text.WordWrap
-            }
-
-            Text {
-              visible: spame.unsubscribed.length > 0
-              width: parent.width
-              bottomPadding: Style.space(4)
-              text: "Resubscribe opens the sender's page so you can sign back up."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
+              font.pixelSize: spame.unsubscribed.length === 0 ? Style.font.body : Style.font.caption
               wrapMode: Text.WordWrap
             }
 
@@ -409,25 +431,111 @@ Panel {
               model: spame.unsubscribed
               UnsubscribedRow {
                 required property var modelData
-                width: parent.width
+                width: resubColumn.width
                 entry: modelData
               }
             }
           }
+        }
 
-          Button {
-            visible: spame.configured
-            text: "Disconnect " + spame.email
-            iconText: "󰍃"
-            foreground: root.dim
-            fontFamily: root.fontFamily
-            fontSize: Style.font.caption
-            enabled: !spame.busy
-            onClicked: spame.forget()
+        // ------------------------------------------------------ fixed footer
+
+        Button {
+          visible: spame.configured && root.tab === "unsubscribe" && spame.subscribed.length > 0
+          Layout.fillWidth: true
+          bordered: true
+          text: spame.unsubscribing ? "Unsubscribing…"
+            : (spame.selectedCount > 0 ? "Done · unsubscribe from " + spame.selectedCount
+            : "Tick the senders you don't want")
+          iconText: "󰗨"
+          foreground: spame.selectedCount > 0 ? root.urgent : root.dim
+          fontFamily: root.fontFamily
+          enabled: spame.selectedCount > 0 && !spame.unsubscribing
+          onClicked: spame.unsubscribeSelected()
+        }
+      }
+    }
+  }
+
+  component Section: Column {
+    id: sec
+    property var section: ({ id: "", label: "", senders: [] })
+    readonly property bool isCollapsed: !!spame.collapsed[section.id]
+    readonly property string checkState: root.sectionState(section.senders)
+    spacing: Style.space(2)
+
+    CursorSurface {
+      id: secHeader
+      width: parent.width
+      foreground: root.foreground
+      fill: root.hoverFill
+      implicitHeight: secRow.implicitHeight + Style.space(10)
+
+      MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onEntered: secHeader.hasCursor = true
+        onExited: secHeader.hasCursor = false
+        onClicked: spame.toggleCollapsed(sec.section.id)
+      }
+
+      RowLayout {
+        id: secRow
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.leftMargin: Style.space(6)
+        anchors.rightMargin: Style.space(10)
+        spacing: Style.space(8)
+
+        Text {
+          text: sec.isCollapsed ? "󰅂" : "󰅀"
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+        }
+        Text {
+          text: String(sec.section.label).toUpperCase()
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.letterSpacing: 1
+          font.bold: true
+        }
+        Text {
+          text: sec.section.senders.length
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+        Item { Layout.fillWidth: true }
+        Text {
+          text: sec.checkState === "all" ? "󰄲" : (sec.checkState === "some" ? "󰡖" : "󰄱")
+          color: sec.checkState === "none" ? root.dim : root.urgent
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.icon
+
+          MouseArea {
+            anchors.fill: parent
+            anchors.margins: -Style.space(4)
+            cursorShape: Qt.PointingHandCursor
+            onClicked: spame.toggleSection(root.idsOf(sec.section.senders))
           }
         }
       }
     }
+
+    Repeater {
+      model: sec.isCollapsed ? [] : sec.section.senders
+      SenderRow {
+        required property var modelData
+        width: sec.width
+        sender: modelData
+      }
+    }
+
+    Item { width: 1; height: Style.space(4) }
   }
 
   component SenderRow: CursorSurface {
@@ -439,7 +547,7 @@ Panel {
     foreground: root.foreground
     fill: root.hoverFill
     current: checked
-    implicitHeight: rowContent.implicitHeight + Style.spacing.rowPaddingX
+    implicitHeight: rowContent.implicitHeight + Style.space(10)
 
     MouseArea {
       anchors.fill: parent
@@ -455,7 +563,7 @@ Panel {
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(10)
+      anchors.leftMargin: Style.space(22)
       anchors.rightMargin: Style.space(10)
       spacing: Style.space(10)
 
@@ -470,19 +578,28 @@ Panel {
         Layout.fillWidth: true
         spacing: Style.space(1)
 
-        Text {
+        RowLayout {
           Layout.fillWidth: true
-          text: row.sender.name || row.sender.domain
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          elide: Text.ElideRight
-          textFormat: Text.PlainText
+          spacing: Style.space(6)
+          Text {
+            Layout.fillWidth: true
+            text: row.sender.name || row.sender.domain
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+          }
+          Text {
+            text: row.sender.count + (row.sender.count === 1 ? " email" : " emails")
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
         }
         Text {
           Layout.fillWidth: true
-          text: row.sender.domain + " · " + row.sender.count + (row.sender.count === 1 ? " email" : " emails")
-            + " · " + root.methodLabel(row.sender.method)
+          text: row.sender.subject ? row.sender.domain + " · “" + row.sender.subject + "”" : row.sender.domain
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -492,11 +609,12 @@ Panel {
       }
 
       Text {
-        visible: row.status !== ""
-        text: root.statusGlyph(row.status)
-        color: row.status === "needs-you" ? root.urgent : root.foreground
+        Layout.preferredWidth: Style.space(44)
+        horizontalAlignment: Text.AlignRight
+        text: row.status !== "" ? root.statusGlyph(row.status) : root.methodTag(row.sender.method)
+        color: row.status === "needs-you" ? root.urgent : (row.status !== "" ? root.foreground : root.dim)
         font.family: root.fontFamily
-        font.pixelSize: Style.font.icon
+        font.pixelSize: row.status !== "" ? Style.font.icon : Style.font.caption
       }
     }
   }
@@ -506,7 +624,7 @@ Panel {
     property var entry: ({})
     foreground: root.foreground
     fill: root.hoverFill
-    implicitHeight: urowContent.implicitHeight + Style.spacing.rowPaddingX
+    implicitHeight: urowContent.implicitHeight + Style.space(10)
 
     MouseArea {
       anchors.fill: parent

@@ -15,6 +15,8 @@ Item {
   property string lastScan: ""
   property var senders: []          // from the last scan, each with .unsubscribed
   property var unsubscribed: []     // from state.json
+  property var categories: []       // [{id, label}] in display order
+  property var collapsed: ({})      // category id -> true
   property var selected: ({})       // id -> true
   property var rowStatus: ({})      // id -> "working" | "done" | "needs-you"
   property string message: ""
@@ -128,6 +130,24 @@ Item {
 
   function clearSelection() { selected = ({}) }
 
+  function toggleSection(ids) {
+    if (unsubProc.running || ids.length === 0) return
+    var allOn = ids.every(function(id) { return !!selected[id] })
+    var next = Object.assign({}, selected)
+    for (var i = 0; i < ids.length; i++) {
+      if (allOn) delete next[ids[i]]
+      else next[ids[i]] = true
+    }
+    selected = next
+  }
+
+  function toggleCollapsed(id) {
+    var next = Object.assign({}, collapsed)
+    if (next[id]) delete next[id]
+    else next[id] = true
+    collapsed = next
+  }
+
   function unsubscribeSelected() {
     var ids = Object.keys(selected)
     if (ids.length === 0 || unsubProc.running) return
@@ -213,7 +233,9 @@ Item {
     stdout: SplitParser { onRead: function(l) { cachedProc._out = root.append(cachedProc._out, l) } }
     onExited: {
       var r = root.parseLast(_out)
-      if (!r.error) root.applySenders(r.senders)
+      if (r.error) return
+      if (r.categories) root.categories = r.categories
+      root.applySenders(r.senders)
     }
   }
 
@@ -234,6 +256,7 @@ Item {
     onExited: {
       var r = root.parseLast(_out)
       if (r.error) { root.say(r.error, true); return }
+      if (r.categories) root.categories = r.categories
       root.applySenders(r.senders)
       root.lastScan = r.at || ""
       root.say("Found " + root.pendingCount + " newsletter senders.", false)

@@ -10,8 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "helper"))
 import spame  # noqa: E402
 
 
-def raw_headers(frm, date="Mon, 28 Sep 2026 10:00:00 +0000", lu=None, lup=None):
+def raw_headers(frm, date="Mon, 28 Sep 2026 10:00:00 +0000", lu=None, lup=None, subject=None):
     lines = [f"From: {frm}", f"Date: {date}"]
+    if subject:
+        lines.append(f"Subject: {subject}")
     if lu:
         lines.append(f"List-Unsubscribe: {lu}")
     if lup:
@@ -65,6 +67,20 @@ class SenderKey(unittest.TestCase):
         k2 = spame.sender_key("Store B", "shopifyemail.com")
         self.assertNotEqual(k1, k2)
         self.assertEqual(spame.sender_key("Fender", "fender.com"), "fender.com")
+
+    def test_mime_encoded_display_name(self):
+        name, domain = spame.sender_identity("=?utf-8?b?w4FuZ2VsIEfDs21leg==?= <a@shop.es>")
+        self.assertEqual(name, "Ángel Gómez")
+
+    def test_proton_alias_display_suffix_removed(self):
+        name, domain = spame.sender_identity(
+            '"Cybersecurity Insider - newsletters at nl.technologyadvice.com" '
+            '<newsletters_at_nl_technologyadvice_com_giwwae@passmail.net>')
+        self.assertEqual(name, "Cybersecurity Insider")
+        self.assertEqual(domain, "technologyadvice.com")
+        name, _ = spame.sender_identity(
+            '"support at magicshop.co.uk" <support_at_magicshop_co_uk_oa@passmail.net>')
+        self.assertEqual(name, "Magicshop")
 
     def test_name_falls_back_to_domain(self):
         name, domain = spame.sender_identity("news@news.wallapop.com")
@@ -179,6 +195,66 @@ class Ladder(unittest.TestCase):
         self.assertEqual((r["status"], r["method"]), ("done", "email"))
         t.one_click.assert_not_called()
         t.page.assert_not_called()
+
+
+class Categorize(unittest.TestCase):
+    def test_keyword_categories(self):
+        cases = [
+            ("Éxito Bursátil", "exito-bursatil.com", ["Las acciones que debes comprar hoy"], "finance"),
+            ("Ultima Markets", "ultimamarkets.com", ["Trade forex with low spreads"], "finance"),
+            ("TLDR", "tldrnewsletter.com", ["OpenAI ships new model"], "tech"),
+            ("Penguin Magic", "penguinmagic.com", ["50% off sale this weekend only"], "shopping"),
+            ("Epic Games Store", "epicgames.com", ["Your free game this week"], "entertainment"),
+            ("Coursera", "coursera.org", ["Start learning Python today"], "learning"),
+            ("Pinterest", "pinterest.com", ["Ideas we think you'll love"], "social"),
+            ("Atrápalo", "atrapalo.com", ["Vuelos y hoteles con descuento"], "travel"),
+        ]
+        for name, domain, subjects, want in cases:
+            self.assertEqual(spame.categorize(name, domain, subjects, None), want, name)
+
+    def test_gmail_category_fallback(self):
+        self.assertEqual(spame.categorize("Acme", "acme.xyz", ["Hello"], "promotions"), "shopping")
+        self.assertEqual(spame.categorize("Acme", "acme.xyz", ["Hello"], "social"), "social")
+        self.assertEqual(spame.categorize("Acme", "acme.xyz", ["Hello"], None), "other")
+
+    def test_group_senders_attaches_category_and_subjects(self):
+        msgs = [raw_headers('"TLDR" <dan@tldrnewsletter.com>', lu="<https://tldr.tech/u>",
+                            subject="New AI model and developer tools")]
+        s = spame.group_senders(msgs)[0]
+        self.assertEqual(s["category"], "tech")
+        self.assertEqual(s["subject"], "New AI model and developer tools")
+
+    def test_gmail_category_passed_by_uid(self):
+        msgs = [raw_headers("a@acme.xyz", lu="<https://acme.xyz/u>")]
+        s = spame.group_senders(msgs, gmail_categories=["promotions"])[0]
+        self.assertEqual(s["category"], "shopping")
+
+
+class Topics(unittest.TestCase):
+    def mk(self, name, domain, category="shopping", subject=""):
+        return {"id": domain, "name": name, "domain": domain, "category": category, "subject": subject}
+
+    def test_recurring_word_becomes_personal_section(self):
+        senders = [
+            self.mk("N2GMagic", "n2gmagic.com"), self.mk("Penguin Magic", "penguinmagic.com"),
+            self.mk("Alakazam Magic", "alakazam.co.uk", "learning"),
+            self.mk("Vanishing Inc", "vanishingincmagic.com", "other"),
+            self.mk("La Magia del Sur", "tiendalamagiadelsur.es"),
+            self.mk("TLDR", "tldrnewsletter.com", "tech"), self.mk("Fender", "fender.com"),
+            self.mk("Team Tailscale", "tailscale.com", "tech"), self.mk("Team Notion", "notion.so", "tech"),
+            self.mk("Team Canva", "canva.com", "tech"), self.mk("Team Base44", "base44.com", "tech"),
+        ]
+        topics = spame.discover_topics(senders)
+        self.assertEqual(topics, [{"id": "topic-magic", "label": "Magic"}])  # "team" is a stopword
+        cats = {s["id"]: s["category"] for s in senders}
+        self.assertEqual(cats["vanishingincmagic.com"], "topic-magic")
+        self.assertEqual(cats["alakazam.co.uk"], "topic-magic")
+        self.assertEqual(cats["tiendalamagiadelsur.es"], "topic-magic")
+        self.assertEqual(cats["tldrnewsletter.com"], "tech")
+
+    def test_no_topic_when_nothing_recurs(self):
+        senders = [self.mk("A Shop", "a.com"), self.mk("Bee", "b.com"), self.mk("Cee", "c.com")]
+        self.assertEqual(spame.discover_topics(senders), [])
 
 
 class AllMailFolder(unittest.TestCase):
