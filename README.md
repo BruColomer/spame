@@ -49,9 +49,11 @@ For each sender you tick, Spame tries these in order and stops at the first succ
 
 ## Resubscribing
 
-Email has no standard "resubscribe". Spame opens the sender's unsubscribe
-page (most offer a resubscribe button) or their website, and drops them from
-the unsubscribed list so they show up again on the next scan.
+Email has no standard "resubscribe". Spame opens the sender's website (or, for
+senders that unsubscribed through a web page, that page again, since most offer
+a resubscribe button) so you can sign back up, and drops them from the
+unsubscribed list. Brands that mail through a shared platform (Shopify,
+Mailchimp, …) get a web search for their newsletter instead.
 
 ## Usage
 

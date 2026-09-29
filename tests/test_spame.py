@@ -291,6 +291,23 @@ class AllMailFolder(unittest.TestCase):
         self.assertEqual(spame.find_all_mail([b'(\\HasNoChildren) "/" "INBOX"']), "INBOX")
 
 
+class ResubscribeTarget(unittest.TestCase):
+    def test_one_click_opens_website_not_endpoint(self):
+        entry = {"domain": "pinterest.com", "method": "one-click", "name": "Pinterest",
+                 "http": "https://unsubscribe.spmta.com/u/abc~~"}
+        self.assertEqual(spame.resubscribe_target(entry), "https://pinterest.com")
+
+    def test_web_page_unsubscribe_reopens_that_page(self):
+        entry = {"domain": "shop.com", "method": "page", "http": "https://shop.com/prefs?id=1"}
+        self.assertEqual(spame.resubscribe_target(entry), "https://shop.com/prefs?id=1")
+
+    def test_shared_platform_sender_gets_a_search(self):
+        entry = {"domain": "shopifyemail.com", "method": "one-click", "name": "Magic Cellar"}
+        url = spame.resubscribe_target(entry)
+        self.assertTrue(url.startswith("https://duckduckgo.com/?q="), url)
+        self.assertIn("Magic+Cellar", url)
+
+
 class StateStore(unittest.TestCase):
     def test_round_trip_and_resubscribe_target(self):
         with tempfile.TemporaryDirectory() as d:
@@ -301,7 +318,8 @@ class StateStore(unittest.TestCase):
                 ])
                 listed = spame.load_state()["senders"]
                 self.assertIn("shop.com", listed)
-                self.assertEqual(spame.resubscribe_target(listed["shop.com"]), "https://shop.com/u")
+                # One-click URLs are POST-only endpoints: never open them, open the brand site.
+                self.assertEqual(spame.resubscribe_target(listed["shop.com"]), "https://shop.com")
                 self.assertEqual(spame.resubscribe_target({"domain": "x.com"}), "https://x.com")
                 spame.forget_sender("shop.com")
                 self.assertNotIn("shop.com", spame.load_state()["senders"])

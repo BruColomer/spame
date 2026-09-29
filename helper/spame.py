@@ -181,10 +181,18 @@ def forget_sender(sender_id):
 
 
 def resubscribe_target(entry):
+    """Where to send someone who wants back in. One-click URLs are POST-only
+    endpoints that error on GET, so only a web-page unsubscribe is reopened;
+    otherwise go to the brand's site (or search, if it mails via a platform)."""
     url = entry.get("http") or entry.get("url")
-    if url and url.startswith(("https://", "http://")):
+    method = entry.get("method", "")
+    if method in ("page", "browser") and url and url.startswith(("https://", "http://")):
         return url
-    return "https://" + entry.get("domain", "")
+    domain = entry.get("domain", "")
+    if domain in SHARED_PLATFORMS or domain in ALIAS_DOMAINS or not domain:
+        query = urllib.parse.quote_plus(f"{entry.get('name', domain)} newsletter")
+        return "https://duckduckgo.com/?q=" + query
+    return "https://" + domain
 
 
 # ---------------------------------------------------------------- credentials

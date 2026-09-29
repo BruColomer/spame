@@ -421,7 +421,7 @@ Panel {
               horizontalAlignment: spame.unsubscribed.length === 0 ? Text.AlignHCenter : Text.AlignLeft
               text: spame.unsubscribed.length === 0
                 ? "Nothing here yet. Senders you unsubscribe from show up here."
-                : "Resubscribe opens the sender's page so you can sign back up."
+                : "Resubscribe opens the sender's website so you can sign back up."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: spame.unsubscribed.length === 0 ? Style.font.body : Style.font.caption
