@@ -181,6 +181,20 @@ class Ladder(unittest.TestCase):
         t.page.assert_not_called()
 
 
+class AllMailFolder(unittest.TestCase):
+    def test_finds_localized_all_mail_by_flag(self):
+        listing = [
+            b'(\\HasNoChildren) "/" "INBOX"',
+            b'(\\HasChildren \\Noselect) "/" "[Gmail]"',
+            b'(\\All \\HasNoChildren) "/" "[Gmail]/Todos"',
+            b'(\\HasNoChildren \\Sent) "/" "[Gmail]/Enviados"',
+        ]
+        self.assertEqual(spame.find_all_mail(listing), '"[Gmail]/Todos"')
+
+    def test_falls_back_to_inbox(self):
+        self.assertEqual(spame.find_all_mail([b'(\\HasNoChildren) "/" "INBOX"']), "INBOX")
+
+
 class StateStore(unittest.TestCase):
     def test_round_trip_and_resubscribe_target(self):
         with tempfile.TemporaryDirectory() as d:

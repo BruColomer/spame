@@ -519,11 +519,23 @@ def unsubscribe_one(sender, transport):
 
 # ---------------------------------------------------------------- IMAP scan
 
+def find_all_mail(list_lines):
+    """Gmail localizes folder names, so find All Mail by its \\All flag."""
+    for line in list_lines or []:
+        text = line.decode("utf-8", "replace") if isinstance(line, bytes) else str(line)
+        match = re.match(r'\((?P<flags>[^)]*)\)\s+"[^"]*"\s+(?P<name>.+)$', text)
+        if match and "\\all" in match.group("flags").lower().split():
+            return match.group("name").strip()
+    return "INBOX"
+
+
 def fetch_headers(address, password, months):
     conn = imaplib.IMAP4_SSL(IMAP_HOST, 993, ssl_context=ssl.create_default_context(), timeout=60)
     try:
         conn.login(address, password)
-        typ, _ = conn.select('"[Gmail]/All Mail"', readonly=True)
+        typ, listing = conn.list()
+        folder = find_all_mail(listing if typ == "OK" else [])
+        typ, _ = conn.select(folder, readonly=True)
         if typ != "OK":
             conn.select("INBOX", readonly=True)
         since = (datetime.now() - timedelta(days=30 * months)).strftime("%d-%b-%Y")
