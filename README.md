@@ -25,6 +25,9 @@ personal mail from the same companies keep arriving.
 omarchy plugin add https://github.com/BruColomer/spame --enable
 ```
 
+After `omarchy plugin update io.github.brucolomer.spame`, run `omarchy restart shell`
+if the panel still looks like the old version (bar widgets keep their loaded code until the shell restarts).
+
 Requirements: Omarchy 4 (Quattro), `python3` and `secret-tool` (libsecret). Both ship with Omarchy.
 Optional: `pip install playwright` so Spame can also click through JavaScript unsubscribe pages.
 
