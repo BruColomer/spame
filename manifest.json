@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.brucolomer.spame",
+  "name": "Spame",
+  "version": "0.1.0",
+  "author": "BruColomer",
+  "license": "MIT",
+  "description": "Find every newsletter and promo sender in your Gmail, tick the ones you don't want, and unsubscribe from all of them at once.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Spame",
+    "description": "Bulk-unsubscribe from Gmail newsletters, and resubscribe if you change your mind.",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "scanMonths": 6
+    },
+    "schema": [
+      {
+        "key": "scanMonths",
+        "type": "integer",
+        "label": "Months of mail to scan",
+        "min": 1,
+        "max": 24,
+        "step": 1,
+        "defaultValue": 6
+      }
+    ]
+  }
+}
