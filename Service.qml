@@ -16,7 +16,7 @@ Item {
   property var senders: []          // from the last scan, each with .unsubscribed
   property var unsubscribed: []     // from state.json
   property var categories: []       // [{id, label}] in display order
-  property var collapsed: ({})      // category id -> true
+  property var expanded: ({})       // category id -> true; sections start closed
   property var selected: ({})       // id -> true
   property var rowStatus: ({})      // id -> "working" | "done" | "needs-you"
   property string message: ""
@@ -141,12 +141,14 @@ Item {
     selected = next
   }
 
-  function toggleCollapsed(id) {
-    var next = Object.assign({}, collapsed)
+  function toggleExpanded(id) {
+    var next = Object.assign({}, expanded)
     if (next[id]) delete next[id]
     else next[id] = true
-    collapsed = next
+    expanded = next
   }
+
+  function collapseAll() { expanded = ({}) }
 
   function unsubscribeSelected() {
     var ids = Object.keys(selected)

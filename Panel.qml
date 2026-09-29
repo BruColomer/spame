@@ -99,6 +99,7 @@ Panel {
   implicitHeight: button.implicitHeight
 
   onOpenedChanged: if (opened) {
+    spame.collapseAll()
     spame.refresh()
     spame.loadUnsubscribed()
     if (listFlick) listFlick.contentY = 0
@@ -461,7 +462,7 @@ Panel {
   component Section: Column {
     id: sec
     property var section: ({ id: "", label: "", senders: [] })
-    readonly property bool isCollapsed: !!spame.collapsed[section.id]
+    readonly property bool isCollapsed: root.filterText.trim() === "" && !spame.expanded[section.id]
     readonly property string checkState: root.sectionState(section.senders)
     spacing: Style.space(2)
 
@@ -478,7 +479,7 @@ Panel {
         cursorShape: Qt.PointingHandCursor
         onEntered: secHeader.hasCursor = true
         onExited: secHeader.hasCursor = false
-        onClicked: spame.toggleCollapsed(sec.section.id)
+        onClicked: spame.toggleExpanded(sec.section.id)
       }
 
       RowLayout {

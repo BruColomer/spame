@@ -61,7 +61,7 @@ the unsubscribed list so they show up again on the next scan.
 | Rescan | middle-click the envelope, or `r` in the panel |
 | Filter (name, domain or subject) | `/` in the panel |
 | Select a whole section | the checkbox on the section header |
-| Collapse a section | click the section header |
+| Open or close a section (all start closed) | click the section header |
 | Switch tabs | `1` / `2` |
 
 The envelope pulses while Spame is scanning or unsubscribing; hover it to see how many senders are left.
