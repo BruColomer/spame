@@ -189,7 +189,7 @@ def resubscribe_target(entry):
     otherwise go to the brand's site (or search, if it mails via a platform)."""
     url = entry.get("http") or entry.get("url")
     method = entry.get("method", "")
-    if method in ("page", "browser") and url and url_is_public(url):
+    if method == "page" and url and url_is_public(url):
         return url
     domain = entry.get("domain", "")
     if (domain in SHARED_PLATFORMS or domain in ALIAS_DOMAINS or not domain
@@ -708,38 +708,6 @@ class Transport:
             return False
         return False
 
-    def browser(self, url):
-        """Playwright attempt. None = Playwright unavailable, else bool."""
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            return None
-        if not url_is_public(url):
-            return False
-        try:
-            with sync_playwright() as pw:
-                exe = shutil.which("chromium") or shutil.which("google-chrome-stable")
-                b = pw.chromium.launch(headless=True, executable_path=exe) if exe else pw.chromium.launch()
-                pg = b.new_page()
-                # Same rule for every request the page makes (subresources, redirects, clicks).
-                pg.route("**/*", lambda route: route.continue_() if url_is_public(route.request.url)
-                         else route.abort())
-                pg.goto(url, timeout=HTTP_TIMEOUT * 1000)
-                if looks_confirmed(pg.content()):
-                    return True
-                pattern = re.compile(r"unsubscri|confirm|opt.?out|baja|d[ée]sabonn|abmelden", re.I)
-                for role in ("button", "link"):
-                    target = pg.get_by_role(role, name=pattern)
-                    if target.count():
-                        target.first.click(timeout=5000)
-                        pg.wait_for_load_state("networkidle", timeout=10000)
-                        break
-                ok = looks_confirmed(pg.content())
-                b.close()
-                return ok
-        except Exception:
-            return False
-
     def close(self):
         if self._smtp is not None:
             try:
@@ -762,8 +730,9 @@ def unsubscribe_one(sender, transport):
     if mailto:
         attempts.append(("email", lambda: transport.send_mailto(mailto)))
     if http:
+        # Deliberately no headless-browser step: a real browser can't be
+        # confined to public addresses (redirects, scripts, service workers).
         attempts.append(("page", lambda: transport.page(http)))
-        attempts.append(("browser", lambda: transport.browser(http)))
     for method, attempt in attempts:
         try:
             if attempt():

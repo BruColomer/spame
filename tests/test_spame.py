@@ -207,10 +207,21 @@ class Ladder(unittest.TestCase):
         t.one_click.return_value = False
         t.send_mailto.return_value = False
         t.page.return_value = False
-        t.browser.return_value = None  # playwright not installed
         r = spame.unsubscribe_one(self.sender(), t)
         self.assertEqual(r["status"], "needs-you")
         self.assertEqual(r["url"], "https://shop.com/u")
+
+    def test_never_drives_a_headless_browser(self):
+        # A real browser can't be confined to public addresses (redirects, JS,
+        # service workers), so the ladder must not have a browser step at all.
+        t = mock.Mock()
+        t.one_click.return_value = False
+        t.send_mailto.return_value = False
+        t.page.return_value = False
+        spame.unsubscribe_one(self.sender(), t)
+        t.browser.assert_not_called()
+        source = Path(spame.__file__).read_text()
+        self.assertNotIn("playwright", source.lower())
 
     def test_mailto_only_sender(self):
         t = mock.Mock()

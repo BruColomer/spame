@@ -69,8 +69,8 @@ last date, and the unsubscribe options from its newest message.
 3. **Page auto-submit** — GET the https URL; if the page already confirms, done.
    Otherwise find the unsubscribe/confirm form (or confirm link), submit it with
    its hidden fields, and look for a confirmation phrase (EN/ES/CA/FR/DE/IT/PT).
-4. **Playwright** — only if the `playwright` Python package is importable:
-   load the page, click the unsubscribe/confirm control, check for confirmation.
+4. ~~Playwright~~ — removed in 0.1.2 after marketplace review (browser redirects bypass
+   `page.route`, so a headless browser can't be confined to public addresses).
 5. Otherwise status `needs-you`; after the run all `needs-you` pages open in the
    default browser and a `notify-send` summary is shown.
 

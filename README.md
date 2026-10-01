@@ -29,7 +29,6 @@ After `omarchy plugin update io.github.brucolomer.spame`, run `omarchy restart s
 if the panel still looks like the old version (bar widgets keep their loaded code until the shell restarts).
 
 Requirements: Omarchy 4 (Quattro), `python3` and `secret-tool` (libsecret). Both ship with Omarchy.
-Optional: `pip install playwright` so Spame can also click through JavaScript unsubscribe pages.
 
 ## Setup
 
@@ -47,8 +46,10 @@ For each sender you tick, Spame tries these in order and stops at the first succ
 1. **One-click** (RFC 8058): a background POST to the sender's unsubscribe URL.
 2. **Unsubscribe email**: sends the sender's `mailto:` unsubscribe request from your Gmail.
 3. **Web page**: opens the unsubscribe page, submits its unsubscribe/confirm form and checks for a confirmation message.
-4. **Headless browser**: only if Playwright is installed.
-5. Anything still left opens in your browser at the end so you can confirm it yourself.
+4. Anything still left opens in your browser at the end so you can confirm it yourself.
+
+There is deliberately no headless-browser step: a real browser can't be kept to
+public addresses (redirects, scripts, service workers), so Spame never drives one.
 
 Every unsubscribe URL, redirect and form action comes from untrusted mail, so
 Spame only connects to public internet addresses: each connection (and each
