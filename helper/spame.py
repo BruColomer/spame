@@ -9,12 +9,15 @@ print one JSON object per line. Expected failures are reported as
 import email.header
 import email.utils
 import html
+import http.client
 import imaplib
+import ipaddress
 import json
 import os
 import re
 import shutil
 import smtplib
+import socket
 import ssl
 import subprocess
 import sys
@@ -186,10 +189,11 @@ def resubscribe_target(entry):
     otherwise go to the brand's site (or search, if it mails via a platform)."""
     url = entry.get("http") or entry.get("url")
     method = entry.get("method", "")
-    if method in ("page", "browser") and url and url.startswith(("https://", "http://")):
+    if method in ("page", "browser") and url and url_is_public(url):
         return url
     domain = entry.get("domain", "")
-    if domain in SHARED_PLATFORMS or domain in ALIAS_DOMAINS or not domain:
+    if (domain in SHARED_PLATFORMS or domain in ALIAS_DOMAINS or not domain
+            or not url_is_public("https://" + domain)):
         query = urllib.parse.quote_plus(f"{entry.get('name', domain)} newsletter")
         return "https://duckduckgo.com/?q=" + query
     return "https://" + domain
@@ -541,6 +545,102 @@ def looks_confirmed(text):
     return bool(CONFIRMED.search(page_text(text)))
 
 
+# ---------------------------------------------------------------- network guard
+# Unsubscribe URLs, redirects and form actions all come from untrusted mail and
+# pages. Every HTTP connection is resolved first and only ever made to the
+# exact public address that was checked, so a malicious sender cannot make
+# Spame talk to loopback, the LAN, link-local/cloud metadata, etc. (SSRF),
+# including via redirects or DNS rebinding.
+
+class BlockedDestination(Exception):
+    pass
+
+
+def is_public_ip(ip):
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
+    except ValueError:
+        return False
+    if addr.version == 6 and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped
+    return addr.is_global and not addr.is_multicast
+
+
+def public_addresses(host, port):
+    """Resolve host; refuse unless *every* address it resolves to is public."""
+    if not host:
+        raise BlockedDestination("missing host")
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise BlockedDestination(f"cannot resolve {host}") from e
+    if not infos or not all(is_public_ip(info[4][0]) for info in infos):
+        raise BlockedDestination(f"{host} is not a public internet address")
+    return infos
+
+
+def url_is_public(url):
+    try:
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https"):
+            return False
+        public_addresses(parts.hostname, parts.port or (443 if parts.scheme == "https" else 80))
+        return True
+    except (BlockedDestination, ValueError):
+        return False
+
+
+def _guarded_socket(conn):
+    last = None
+    for family, socktype, proto, _, sockaddr in public_addresses(conn.host, conn.port):
+        sock = socket.socket(family, socktype, proto)
+        try:
+            if conn.timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+                sock.settimeout(conn.timeout)
+            sock.connect(sockaddr)  # connect to the checked IP, not a re-resolved name
+            return sock
+        except OSError as e:
+            sock.close()
+            last = e
+    raise last or BlockedDestination(conn.host)
+
+
+class _GuardedHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = _guarded_socket(self)
+
+
+class _GuardedHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        sock = _guarded_socket(self)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _GuardedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_GuardedHTTPConnection, req)
+
+
+class _GuardedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_GuardedHTTPSConnection, req, context=ssl.create_default_context())
+
+
+class _HttpOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    max_redirections = 5
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlsplit(newurl).scheme not in ("http", "https"):
+            raise BlockedDestination("redirect to a non-http scheme")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def guarded_opener():
+    # No ProxyHandler from the environment: a proxy would bypass the address check.
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _GuardedHTTPHandler,
+                                       _GuardedHTTPSHandler, _HttpOnlyRedirects)
+
+
 # ---------------------------------------------------------------- transports
 
 class Transport:
@@ -549,13 +649,16 @@ class Transport:
     def __init__(self, address, password):
         self.address, self.password = address, password
         self._smtp = None
+        self._opener = guarded_opener()
 
     def _request(self, url, data=None, method=None):
+        if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+            raise BlockedDestination("only http(s) URLs are followed")
         headers = {"User-Agent": USER_AGENT, "Accept": "text/html,*/*"}
         if data is not None:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        with self._opener.open(req, timeout=HTTP_TIMEOUT) as resp:
             body = resp.read(2_000_000).decode(resp.headers.get_content_charset() or "utf-8", "replace")
             return resp.status, resp.geturl(), body
 
@@ -611,11 +714,16 @@ class Transport:
             from playwright.sync_api import sync_playwright
         except ImportError:
             return None
+        if not url_is_public(url):
+            return False
         try:
             with sync_playwright() as pw:
                 exe = shutil.which("chromium") or shutil.which("google-chrome-stable")
                 b = pw.chromium.launch(headless=True, executable_path=exe) if exe else pw.chromium.launch()
                 pg = b.new_page()
+                # Same rule for every request the page makes (subresources, redirects, clicks).
+                pg.route("**/*", lambda route: route.continue_() if url_is_public(route.request.url)
+                         else route.abort())
                 pg.goto(url, timeout=HTTP_TIMEOUT * 1000)
                 if looks_confirmed(pg.content()):
                     return True
@@ -826,7 +934,9 @@ def cmd_unsubscribe(_args):
         transport.close()
     leftovers = [r for r in results if r["status"] == "needs-you"]
     for r in leftovers:
-        open_url(r.get("url") if str(r.get("url", "")).startswith("http") else "")
+        url = str(r.get("url") or "")
+        if url_is_public(url):
+            open_url(url)
         time.sleep(0.4)
     done = len(results) - len(leftovers)
     body = f"Unsubscribed from {done} sender{'s' if done != 1 else ''}."

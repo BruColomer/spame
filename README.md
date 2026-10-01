@@ -50,6 +50,11 @@ For each sender you tick, Spame tries these in order and stops at the first succ
 4. **Headless browser**: only if Playwright is installed.
 5. Anything still left opens in your browser at the end so you can confirm it yourself.
 
+Every unsubscribe URL, redirect and form action comes from untrusted mail, so
+Spame only connects to public internet addresses: each connection (and each
+redirect hop) is resolved and checked first, and loopback, LAN, link-local and
+other private ranges are refused. Pages it opens in your browser follow the same rule.
+
 ## Resubscribing
 
 Email has no standard "resubscribe". Spame opens the sender's website (or, for

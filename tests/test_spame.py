@@ -8,6 +8,30 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "helper"))
 import spame  # noqa: E402
+import ipaddress  # noqa: E402
+import socket  # noqa: E402
+
+
+def _fake_getaddrinfo(host, port, *args, **kwargs):
+    """Offline, deterministic DNS: IP literals resolve to themselves,
+    localhost to loopback, every other name to a public documentation-ish IP."""
+    try:
+        ip = str(ipaddress.ip_address(host))
+    except ValueError:
+        ip = "127.0.0.1" if host in ("localhost", "localhost.localdomain") else "93.184.216.34"
+    family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+    return [(family, socket.SOCK_STREAM, 6, "", (ip, port))]
+
+
+_dns_patch = mock.patch("socket.getaddrinfo", side_effect=_fake_getaddrinfo)
+
+
+def setUpModule():
+    _dns_patch.start()
+
+
+def tearDownModule():
+    _dns_patch.stop()
 
 
 def raw_headers(frm, date="Mon, 28 Sep 2026 10:00:00 +0000", lu=None, lup=None, subject=None):
@@ -289,6 +313,102 @@ class AllMailFolder(unittest.TestCase):
 
     def test_falls_back_to_inbox(self):
         self.assertEqual(spame.find_all_mail([b'(\\HasNoChildren) "/" "INBOX"']), "INBOX")
+
+
+class PrivateNetworkGuard(unittest.TestCase):
+    """Unsubscribe URLs come from untrusted mail: never reach local/LAN hosts."""
+
+    def test_non_public_ips_are_rejected(self):
+        for ip in ["127.0.0.1", "10.0.0.5", "192.168.31.120", "172.16.4.4", "169.254.169.254",
+                   "0.0.0.0", "100.64.0.1", "::1", "fc00::1", "fe80::1", "::ffff:127.0.0.1",
+                   "224.0.0.1"]:
+            self.assertFalse(spame.is_public_ip(ip), ip)
+        for ip in ["93.184.216.34", "1.1.1.1", "2606:4700:4700::1111"]:
+            self.assertTrue(spame.is_public_ip(ip), ip)
+
+    def test_hostname_resolving_to_private_is_blocked(self):
+        fake = [(2, 1, 6, "", ("192.168.1.1", 80))]
+        with mock.patch("socket.getaddrinfo", return_value=fake):
+            with self.assertRaises(spame.BlockedDestination):
+                spame.public_addresses("router.evil.example", 80)
+
+    def test_mixed_resolution_is_blocked(self):
+        fake = [(2, 1, 6, "", ("93.184.216.34", 443)), (2, 1, 6, "", ("127.0.0.1", 443))]
+        with mock.patch("socket.getaddrinfo", return_value=fake):
+            with self.assertRaises(spame.BlockedDestination):
+                spame.public_addresses("rebind.example", 443)
+
+    def test_url_check(self):
+        self.assertFalse(spame.url_is_public("http://localhost:8080/x"))
+        self.assertFalse(spame.url_is_public("http://127.0.0.1/u"))
+        self.assertFalse(spame.url_is_public("file:///etc/passwd"))
+        self.assertFalse(spame.url_is_public("ftp://1.1.1.1/x"))
+        with mock.patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 443))]):
+            self.assertTrue(spame.url_is_public("https://shop.example/u"))
+
+    def test_transport_never_contacts_loopback(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        hits = []
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def do_GET(self):
+                hits.append(self.path)
+                self.send_response(200); self.end_headers(); self.wfile.write(b"You have been unsubscribed")
+            do_POST = do_GET
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            base = f"http://127.0.0.1:{srv.server_port}"
+            t = spame.Transport("a", "b")
+            self.assertFalse(t.one_click(base + "/oneclick"))
+            self.assertFalse(t.page(base + "/page"))
+            self.assertEqual(hits, [])
+        finally:
+            srv.shutdown()
+
+    def test_redirect_into_private_network_is_blocked(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        hits = []
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def do_GET(self):
+                hits.append(self.path)
+                if self.path == "/start":
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/secret")
+                    self.end_headers()
+                else:
+                    self.send_response(200); self.end_headers(); self.wfile.write(b"You have been unsubscribed")
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        real = spame.public_addresses
+
+        def fake_public(host, port):
+            # Pretend "safe.example" is a public host that happens to live on this server.
+            if host == "safe.example":
+                return [(2, 1, 6, "", ("127.0.0.1", port))]
+            return real(host, port)
+
+        try:
+            with mock.patch.object(spame, "public_addresses", side_effect=fake_public):
+                t = spame.Transport("a", "b")
+                self.assertFalse(t.page(f"http://safe.example:{srv.server_port}/start"))
+            self.assertEqual(hits, ["/start"])  # the redirect target was never requested
+        finally:
+            srv.shutdown()
+
+    def test_resubscribe_never_targets_private_hosts(self):
+        url = spame.resubscribe_target({"domain": "localhost", "method": "one-click", "name": "X"})
+        self.assertTrue(url.startswith("https://duckduckgo.com/"), url)
+        url = spame.resubscribe_target({"domain": "x.com", "method": "page",
+                                        "http": "http://192.168.1.1/prefs"})
+        self.assertFalse("192.168" in url, url)
 
 
 class ResubscribeTarget(unittest.TestCase):
